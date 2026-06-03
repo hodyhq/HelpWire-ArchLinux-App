@@ -1,0 +1,18 @@
+pkgbase = helpwire-operator
+	pkgdesc = HelpWire Operator — remote control / remote support desktop client (portable repackage)
+	pkgver = 2.1.16.179
+	pkgrel = 1
+	url = https://www.helpwire.app/
+	arch = x86_64
+	license = custom:proprietary
+	depends = hicolor-icon-theme
+	depends = xdg-utils
+	depends = libxcb
+	depends = fontconfig
+	options = !strip
+	source = helpwire-operator-2.1.16.179.tar.gz::https://get.helpwire.app/downloads/operator/linux/helpwire-quick.tar.gz
+	source = helpwire-operator.desktop
+	sha256sums = 1455062fa16b23e95faef4f705fad630343df360ace56dd9ffe456eff4321d09
+	sha256sums = SKIP
+
+pkgname = helpwire-operator

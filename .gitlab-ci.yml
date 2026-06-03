@@ -1,0 +1,121 @@
+# CI for helpwire-arch-client
+#
+# Two jobs:
+#   build        - on every push & tag: build the .pkg.tar.zst in an Arch container,
+#                  validate it, keep it as an artifact. On tags, attach to a Release.
+#   check-update - scheduled (set up a daily pipeline schedule): poll upstream's
+#                  auto-update manifest; if a new version exists, bump pkgver +
+#                  recompute sha256, commit, push a tag (which fires the release),
+#                  and ping Matrix.
+#
+# Required CI/CD variables (Settings > CI/CD > Variables):
+#   GITLAB_PAT       - project/personal access token with write_repository (for the
+#                      auto-bump push + tag). Masked. Required for check-update.
+#   MATRIX_HS_URL    - e.g. https://matrix.hody.sh           (optional alert)
+#   MATRIX_TOKEN     - Matrix access token for the notifier account (optional, masked)
+#   MATRIX_ROOM_ID   - e.g. !abcd:hody.sh                    (optional alert)
+
+stages: [build, release, check]
+
+# ---------------------------------------------------------------------------
+# Build the Arch package (makepkg must run as non-root).
+# ---------------------------------------------------------------------------
+build:
+  stage: build
+  image: archlinux:latest
+  before_script:
+    - pacman -Syu --noconfirm --needed base-devel git curl
+    - useradd -m builder
+    - chown -R builder:builder .
+  script:
+    - sudo -u builder makepkg -f --noconfirm
+    - ls -lh ./*.pkg.tar.zst
+    - sudo -u builder makepkg --printsrcinfo > .SRCINFO
+  artifacts:
+    paths:
+      - "*.pkg.tar.zst"
+    expire_in: 30 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+# ---------------------------------------------------------------------------
+# On a tag, publish a Release with the built package attached.
+# ---------------------------------------------------------------------------
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs: ["build"]
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - echo "Publishing release for ${CI_COMMIT_TAG}"
+  release:
+    tag_name: "$CI_COMMIT_TAG"
+    name: "HelpWire Operator ${CI_COMMIT_TAG}"
+    description: "Arch package for HelpWire Operator ${CI_COMMIT_TAG}. Built from upstream portable tarball. See PKGBUILD for details."
+    assets:
+      links:
+        - name: "Build artifacts (.pkg.tar.zst)"
+          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/download?job=build"
+
+# ---------------------------------------------------------------------------
+# Scheduled upstream-version check + auto-bump + alert.
+# ---------------------------------------------------------------------------
+check-update:
+  stage: check
+  image: archlinux:latest
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  before_script:
+    - pacman -Syu --noconfirm --needed base-devel git curl openssh python
+  script:
+    - chmod +x scripts/check-update.sh
+    - |
+      set -e
+      if up=$(scripts/check-update.sh); then
+        echo "Up to date at ${up}. Nothing to do."
+        exit 0
+      else
+        rc=$?
+        [ "$rc" = "10" ] || { echo "check failed (rc=$rc)"; exit "$rc"; }
+      fi
+      NEW_VER="$up"
+      echo "New upstream version: ${NEW_VER}"
+
+      # Recompute checksum against the (rolling) latest tarball.
+      curl -fsSL -o /tmp/hw.tar.gz "https://get.helpwire.app/downloads/operator/linux/helpwire-quick.tar.gz"
+      NEW_SHA=$(sha256sum /tmp/hw.tar.gz | awk '{print $1}')
+      echo "New sha256: ${NEW_SHA}"
+
+      # Bump PKGBUILD: pkgver, reset pkgrel=1, replace the first sha256sums entry.
+      sed -i -E "s/^pkgver=.*/pkgver=${NEW_VER}/" PKGBUILD
+      sed -i -E "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+      sed -i -E "0,/^sha256sums=\\('[0-9a-f]+'/s//sha256sums=('${NEW_SHA}'/" PKGBUILD
+      grep -E '^(pkgver|pkgrel)=' PKGBUILD
+      grep -E "'${NEW_SHA}'" PKGBUILD
+
+      # Commit + tag + push using the write token.
+      git config user.email "ci@hody.sh"
+      git config user.name "helpwire-ci"
+      git remote set-url origin "https://oauth2:${GITLAB_PAT}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      git add PKGBUILD
+      git commit -m "auto: bump to ${NEW_VER}"
+      git tag "v${NEW_VER}"
+      git push origin HEAD:${CI_DEFAULT_BRANCH}
+      git push origin "v${NEW_VER}"
+
+      # Optional Matrix alert.
+      if [ -n "${MATRIX_HS_URL:-}" ] && [ -n "${MATRIX_TOKEN:-}" ] && [ -n "${MATRIX_ROOM_ID:-}" ]; then
+        txn=$(date +%s%N)
+        body="HelpWire Operator ${NEW_VER} released. Arch package auto-built: ${CI_PROJECT_URL}/-/releases/v${NEW_VER}"
+        json_body=$(printf '%s' "$body" | python -c 'import json,sys;print(json.dumps(sys.stdin.read()))')
+        curl -fsS -X PUT \
+          "${MATRIX_HS_URL}/_matrix/client/v3/rooms/${MATRIX_ROOM_ID}/send/m.room.message/${txn}?access_token=${MATRIX_TOKEN}" \
+          -H 'Content-Type: application/json' \
+          -d "{\"msgtype\":\"m.text\",\"body\":${json_body}}" \
+          && echo "Matrix alert sent." || echo "Matrix alert failed (non-fatal)."
+      else
+        echo "Matrix vars not set; skipping chat alert (GitLab release notification still applies)."
+      fi

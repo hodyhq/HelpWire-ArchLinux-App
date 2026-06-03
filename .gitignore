@@ -1,0 +1,7 @@
+# makepkg build output
+src/
+pkg/
+*.pkg.tar.zst
+*.pkg.tar.xz
+*.tar.gz
+!/.gitkeep

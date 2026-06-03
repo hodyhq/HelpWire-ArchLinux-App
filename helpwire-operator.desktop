@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=HelpWire Operator
+GenericName=Remote Support
+Comment=Remote control / remote support desktop client
+# Force the xcb (X11/XWayland) Qt platform: the bundle ships no Qt Wayland plugin.
+# %u passes the helpwire:// URL handed over by the browser.
+Exec=env QT_QPA_PLATFORM=xcb /opt/helpwire-operator/bin/helpwire-operator %u
+Icon=helpwire-operator
+Terminal=false
+StartupNotify=true
+Categories=Network;RemoteAccess;
+Keywords=remote;support;desktop;control;helpwire;
+MimeType=x-scheme-handler/helpwire;
