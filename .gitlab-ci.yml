@@ -28,7 +28,9 @@ build:
     - useradd -m builder
     - chown -R builder:builder .
   script:
-    - sudo -u builder makepkg -f --noconfirm
+    # --nodeps: this is a binary repackage, so depends=() are runtime-only and need
+    # not be installed in the build container. pacman still enforces them at install.
+    - sudo -u builder makepkg -f --nodeps --noconfirm
     - ls -lh ./*.pkg.tar.zst
     - sudo -u builder makepkg --printsrcinfo > .SRCINFO
   artifacts:
@@ -92,7 +94,7 @@ check-update:
       # Bump PKGBUILD: pkgver, reset pkgrel=1, replace the first sha256sums entry.
       sed -i -E "s/^pkgver=.*/pkgver=${NEW_VER}/" PKGBUILD
       sed -i -E "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
-      sed -i -E "0,/^sha256sums=\\('[0-9a-f]+'/s//sha256sums=('${NEW_SHA}'/" PKGBUILD
+      sed -i -E "0,/^sha256sums=\('[0-9a-f]+'/s//sha256sums=('${NEW_SHA}'/" PKGBUILD
       grep -E '^(pkgver|pkgrel)=' PKGBUILD
       grep -E "'${NEW_SHA}'" PKGBUILD
 
