@@ -11,7 +11,7 @@ tracked + removable by pacman.
 ## Install
 
 ```bash
-git clone https://git.hody.sh/hody/helpwire-arch-client.git
+git clone <link_to_repo>
 cd helpwire-arch-client
 makepkg -si
 # one-time: make this app the handler for helpwire:// links
