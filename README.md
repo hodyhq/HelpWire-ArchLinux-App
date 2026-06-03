@@ -73,8 +73,15 @@ makepkg -si        # rebuild + upgrade
 | `GITLAB_PAT` | token w/ `write_repository` for the auto-bump push + tag | yes (for scheduled check) |
 | `MATRIX_HS_URL` / `MATRIX_TOKEN` / `MATRIX_ROOM_ID` | chat alert on new version | optional |
 
-Set up the schedule under **Build → Pipeline schedules** (e.g. daily), targeting the
-default branch.
+The schedule is already created (**Build → Pipeline schedules**, daily 08:00 UTC, ref
+`main`).
+
+> [!note]
+> **Maintenance touchpoint:** `GITLAB_PAT` is a **project access token** scoped to this
+> repo (`write_repository` only), set to expire **2027-06-02**. When it expires the daily
+> auto-bump job will start failing — mint a new project access token
+> (Settings → Access Tokens) and update the `GITLAB_PAT` CI/CD variable. Nothing else
+> needs touching.
 
 ## Uninstall
 
