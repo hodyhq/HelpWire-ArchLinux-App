@@ -8,7 +8,7 @@
 # locates its vendored Qt5 / OpenSSL 1.1 from /opt regardless of where it lives.
 
 pkgname=helpwire-operator
-pkgver=2.1.16.179
+pkgver=2.1.16.205
 pkgrel=1
 pkgdesc="HelpWire Operator — remote control / remote support desktop client (portable repackage)"
 arch=('x86_64')
@@ -20,7 +20,7 @@ depends=('hicolor-icon-theme' 'xdg-utils' 'libxcb' 'fontconfig')
 options=('!strip')  # vendored libs are already stripped; avoid touching them
 source=("${pkgname}-${pkgver}.tar.gz::https://get.helpwire.app/downloads/operator/linux/helpwire-quick.tar.gz"
         "${pkgname}.desktop")
-sha256sums=('1455062fa16b23e95faef4f705fad630343df360ace56dd9ffe456eff4321d09'
+sha256sums=('83b02dbe99d5d6fe3fbda8fb77c970bcb6e765c992f766cbc7ad4df1f45f4eaf'
             'SKIP')
 
 package() {
