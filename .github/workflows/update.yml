@@ -1,0 +1,129 @@
+name: update
+
+# Keeps the package current with upstream HelpWire with no manual step.
+#
+# sync    - daily (and on demand) read the app's own auto-update manifest; when a new
+#           version appears, recompute the tarball sha256, bump the PKGBUILD, and commit
+#           the bump back here. Optionally pushes to the AUR (dormant until the
+#           AUR_SSH_PRIVATE_KEY secret is set, e.g. once AUR registration reopens).
+# release - build the package in an Arch container and (re)publish it to the custom
+#           pacman repo hosted on the fixed "repo" GitHub release, so `pacman -Syu`
+#           upgrades it for anyone who added the repo.
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # daily 08:00 UTC
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: Rebuild and publish even if the version is unchanged
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+    outputs:
+      changed: ${{ steps.bump.outputs.changed }}
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect upstream version and bump
+        id: bump
+        run: |
+          set -euo pipefail
+          manifest='https://get.helpwire.app/downloads/operator/linux/update/settings.xml'
+          tarball='https://get.helpwire.app/downloads/operator/linux/helpwire-quick.tar.gz'
+          up="$(curl -fsSL "$manifest" | grep -oE '<current_version>[^<]+</current_version>' | sed -E 's:</?current_version>::g' | head -1)"
+          cur="$(sed -n 's/^pkgver=//p' PKGBUILD | head -1)"
+          [ -n "$up" ] || { echo 'could not read upstream version'; exit 1; }
+          # Validate the external manifest value before it reaches sed/pacman.
+          [[ "$up" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]] || { echo "unexpected version format: $up"; exit 1; }
+          echo "upstream=$up current=$cur"
+          echo "version=$up" >> "$GITHUB_OUTPUT"
+          if [ "$up" = "$cur" ]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The upstream URL is rolling, so the checksum must be recomputed per bump.
+          sha="$(curl -fsSL "$tarball" | sha256sum | cut -d' ' -f1)"
+          sed -i -E "s/^pkgver=.*/pkgver=$up/" PKGBUILD
+          sed -i -E 's/^pkgrel=.*/pkgrel=1/' PKGBUILD
+          sed -i -E "0,/^sha256sums=\('[0-9a-f]+'/s//sha256sums=('$sha'/" PKGBUILD
+          # Keep this repo's .SRCINFO roughly in sync; the AUR push regenerates its own.
+          sed -i -E "s/^\tpkgver = .*/\tpkgver = $up/" .SRCINFO
+          sed -i -E 's/^\tpkgrel = .*/\tpkgrel = 1/' .SRCINFO
+          sed -i -E "s#(helpwire-operator-)[0-9.]+(\.tar\.gz::)#\1$up\2#" .SRCINFO
+          sed -i -E "0,/^\tsha256sums = [0-9a-f]+/s//\tsha256sums = $sha/" .SRCINFO
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+      - name: Commit bump back to GitHub
+        if: steps.bump.outputs.changed == 'true'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "auto: bump to ${{ steps.bump.outputs.version }}"
+          commit_user_name: helpwire-bot
+          commit_user_email: hody@hody.dev
+
+      - name: Publish to the AUR (dormant until AUR_SSH_PRIVATE_KEY is set)
+        if: ${{ env.AUR_KEY != '' && (steps.bump.outputs.changed == 'true' || github.event.inputs.force_publish == 'true') }}
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: helpwire-operator
+          pkgbuild: ./PKGBUILD
+          assets: helpwire-operator.desktop
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_username: hody
+          commit_email: hody@hody.dev
+          commit_message: "Update to ${{ steps.bump.outputs.version }}"
+
+  release:
+    needs: sync
+    if: ${{ needs.sync.outputs.changed == 'true' || github.event.inputs.force_publish == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}   # pick up the bump commit sync just pushed
+
+      - name: Build package and repo DB in an Arch container
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD":/w -w /w archlinux:latest bash -euo pipefail -c '
+            pacman -Syu --noconfirm --needed base-devel git
+            useradd -m builder
+            chown -R builder:builder /w
+            runuser -u builder -- makepkg -f --nodeps --noconfirm
+            mkdir -p dist
+            cp ./*.pkg.tar.zst dist/
+            cd dist
+            repo-add helpwire.db.tar.gz ./*.pkg.tar.zst
+            # pacman requests the bare names helpwire.db / helpwire.files
+            cp helpwire.db.tar.gz helpwire.db
+            cp helpwire.files.tar.gz helpwire.files
+          '
+          ls -lh dist
+
+      - name: Publish the custom pacman repo (fixed "repo" release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view repo >/dev/null 2>&1 || \
+            gh release create repo --title "pacman repo (helpwire)" \
+              --notes "Custom pacman repository. See the README for the /etc/pacman.conf entry." \
+              --latest=false
+          gh release upload repo --clobber \
+            dist/helpwire.db dist/helpwire.files \
+            dist/helpwire.db.tar.gz dist/helpwire.files.tar.gz \
+            dist/*.pkg.tar.zst
