@@ -7,36 +7,46 @@ that portable build in a proper `PKGBUILD` so it installs cleanly on Arch and Ca
 registers the **`helpwire://` URL scheme handler** (so clicking **Connect** in the
 HelpWire web app launches the desktop client), and is tracked and removable by pacman.
 
+Packages are GPG-signed, so the repo runs under pacman's `SigLevel = Required`.
+
 ## Install
 
-### From the custom pacman repo (recommended, auto-updates)
+### From the custom pacman repo (recommended, signed, auto-updates)
 
-One command to add the repo and install (idempotent, safe to re-run):
+One command to import the signing key, add the repo, and install (idempotent):
 
 ```bash
-sudo bash -c 'grep -q "^\[helpwire\]" /etc/pacman.conf || printf "\n[helpwire]\nSigLevel = Optional TrustAll\nServer = https://github.com/hodyhq/HelpWire-ArchLinux-App/releases/download/repo\n" >> /etc/pacman.conf; pacman -Sy --needed helpwire-operator'
+sudo bash -c '
+set -e
+curl -fsSL https://github.com/hodyhq/HelpWire-ArchLinux-App/releases/download/repo/helpwire.pub | pacman-key --add -
+pacman-key --lsign-key 44CF4CEC2ABAE2B76FE824BD00CBCF76ABAAEB97
+grep -q "^\[helpwire\]" /etc/pacman.conf || printf "\n[helpwire]\nSigLevel = Required\nServer = https://github.com/hodyhq/HelpWire-ArchLinux-App/releases/download/repo\n" >> /etc/pacman.conf
+pacman -Sy --needed helpwire-operator
+'
 ```
 
 After that, your normal `sudo pacman -Syu` keeps it current.
 
-Or do it by hand. Add the repo to `/etc/pacman.conf` (append at the end):
+Or do it by hand:
+
+```bash
+# 1. trust the repo signing key (ed25519, fingerprint 44CF4CEC2ABAE2B76FE824BD00CBCF76ABAAEB97)
+curl -fsSL https://github.com/hodyhq/HelpWire-ArchLinux-App/releases/download/repo/helpwire.pub \
+  | sudo pacman-key --add -
+sudo pacman-key --lsign-key 44CF4CEC2ABAE2B76FE824BD00CBCF76ABAAEB97
+```
+
+Then append to `/etc/pacman.conf`:
 
 ```ini
 [helpwire]
-SigLevel = Optional TrustAll
+SigLevel = Required
 Server = https://github.com/hodyhq/HelpWire-ArchLinux-App/releases/download/repo
 ```
-
-Then install:
 
 ```bash
 sudo pacman -Sy helpwire-operator
 ```
-
-New upstream releases are picked up by your normal `sudo pacman -Syu`, no extra steps.
-
-> `SigLevel = Optional TrustAll` trusts whatever the repo serves (fetched over HTTPS from
-> GitHub). Package signing can be added later to make this `SigLevel = Required`.
 
 ### Build from source
 
@@ -68,6 +78,7 @@ Then in the HelpWire web app, **Connect** hands the `helpwire://...` URL to the 
 | Launcher | `/usr/share/applications/helpwire-operator.desktop`, `Exec=env QT_QPA_PLATFORM=xcb ...` |
 | Wayland | Bundle has no Qt Wayland plugin, so it runs via XWayland (`xcb`), pinned in the launcher |
 | Scheme handler | `MimeType=x-scheme-handler/helpwire;`, registered via the `update-desktop-database` pacman hook plus `xdg-mime default` |
+| Signing | Every package and the repo DB are GPG-signed (ed25519); `SigLevel = Required` |
 | Icons | hicolor theme, 8 sizes |
 
 ## Staying current (automatic)
@@ -84,11 +95,12 @@ A GitHub Actions workflow (`.github/workflows/update.yml`) runs daily and on dem
 1. read `<current_version>`; stop if it matches the current `pkgver`
 2. recompute the tarball `sha256` (required, the URL is rolling) and bump the PKGBUILD
 3. commit the bump back here
-4. build the package in an Arch container and refresh the custom pacman repo (the `repo`
-   release), so `pacman -Syu` upgrades it for everyone
+4. build the package in an Arch container, **GPG-sign** it and the DB, and refresh the
+   custom pacman repo (the `repo` release) plus cut an official `vX.Y.Z.N` release
 5. when the `AUR_SSH_PRIVATE_KEY` secret is set, also push to the AUR
 
-`scripts/check-update.sh` is the same check you can run by hand (exit `10` = update available).
+Signing uses the `GPG_PRIVATE_KEY` repo secret; its public half is `helpwire.pub`.
+`scripts/check-update.sh` is the same version check you can run by hand.
 
 ## Uninstall
 

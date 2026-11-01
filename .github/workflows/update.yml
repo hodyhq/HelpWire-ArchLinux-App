@@ -6,9 +6,12 @@ name: update
 #           version appears, recompute the tarball sha256, bump the PKGBUILD, and commit
 #           the bump back here. Optionally pushes to the AUR (dormant until the
 #           AUR_SSH_PRIVATE_KEY secret is set, e.g. once AUR registration reopens).
-# release - build the package in an Arch container and (re)publish it to the custom
-#           pacman repo hosted on the fixed "repo" GitHub release, so `pacman -Syu`
-#           upgrades it for anyone who added the repo.
+# release - build the package in an Arch container, GPG-sign it and the repo DB, and
+#           publish both the custom pacman repo (the fixed "repo" release) and an
+#           official versioned release, so `pacman -Syu` upgrades it under SigLevel=Required.
+#
+# Required secret: GPG_PRIVATE_KEY (ascii-armored private key; its public half is
+# helpwire.pub, imported by users via pacman-key). AUR_SSH_PRIVATE_KEY is optional.
 
 on:
   schedule:
@@ -55,12 +58,10 @@ jobs:
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # The upstream URL is rolling, so the checksum must be recomputed per bump.
           sha="$(curl -fsSL "$tarball" | sha256sum | cut -d' ' -f1)"
           sed -i -E "s/^pkgver=.*/pkgver=$up/" PKGBUILD
           sed -i -E 's/^pkgrel=.*/pkgrel=1/' PKGBUILD
           sed -i -E "0,/^sha256sums=\('[0-9a-f]+'/s//sha256sums=('$sha'/" PKGBUILD
-          # Keep this repo's .SRCINFO roughly in sync; the AUR push regenerates its own.
           sed -i -E "s/^\tpkgver = .*/\tpkgver = $up/" .SRCINFO
           sed -i -E 's/^\tpkgrel = .*/\tpkgrel = 1/' .SRCINFO
           sed -i -E "s#(helpwire-operator-)[0-9.]+(\.tar\.gz::)#\1$up\2#" .SRCINFO
@@ -96,11 +97,14 @@ jobs:
         with:
           ref: ${{ github.ref }}   # pick up the bump commit sync just pushed
 
-      - name: Build package and repo DB in an Arch container
+      - name: Build, sign, and assemble the repo in an Arch container
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          docker run --rm -v "$PWD":/w -w /w archlinux:latest bash -euo pipefail -c '
-            pacman -Syu --noconfirm --needed base-devel git
+          [ -n "$GPG_PRIVATE_KEY" ] || { echo 'GPG_PRIVATE_KEY secret is not set'; exit 1; }
+          docker run --rm -e GPG_PRIVATE_KEY -v "$PWD":/w -w /w archlinux:latest bash -euo pipefail -c '
+            pacman -Syu --noconfirm --needed base-devel git gnupg
             useradd -m builder
             chown -R builder:builder /w
             runuser -u builder -- makepkg -f --nodeps --noconfirm
@@ -108,9 +112,17 @@ jobs:
             cp ./*.pkg.tar.zst dist/
             cd dist
             repo-add helpwire.db.tar.gz ./*.pkg.tar.zst
-            # repo-add emits helpwire.db -> helpwire.db.tar.gz symlinks; pacman fetches the
-            # bare names, so turn them into real files (--remove-destination drops the symlink first).
+            # repo-add emits symlinks; pacman fetches bare names, so make them real files.
             for f in helpwire.db helpwire.files; do cp --remove-destination "$(readlink -f "$f")" "$f"; done
+            # GPG-sign every package and DB (detached, binary) so SigLevel=Required passes.
+            export GNUPGHOME="$(mktemp -d)"
+            printf "%s" "$GPG_PRIVATE_KEY" | gpg --batch --import
+            for f in ./*.pkg.tar.zst helpwire.db.tar.gz helpwire.files.tar.gz; do
+              gpg --batch --yes --pinentry-mode loopback --detach-sign --no-armor -o "$f.sig" "$f"
+            done
+            cp helpwire.db.tar.gz.sig helpwire.db.sig
+            cp helpwire.files.tar.gz.sig helpwire.files.sig
+            cp /w/helpwire.pub helpwire.pub
           '
           ls -lh dist
 
@@ -121,12 +133,15 @@ jobs:
           set -euo pipefail
           gh release view repo >/dev/null 2>&1 || \
             gh release create repo --title "pacman repo (helpwire)" \
-              --notes "Custom pacman repository. See the README for the /etc/pacman.conf entry." \
+              --notes "Custom pacman repository. See the README for the /etc/pacman.conf entry and the signing key." \
               --latest=false
           gh release upload repo --clobber \
-            dist/helpwire.db dist/helpwire.files \
-            dist/helpwire.db.tar.gz dist/helpwire.files.tar.gz \
-            dist/*.pkg.tar.zst
+            dist/helpwire.db dist/helpwire.db.sig \
+            dist/helpwire.db.tar.gz dist/helpwire.db.tar.gz.sig \
+            dist/helpwire.files dist/helpwire.files.sig \
+            dist/helpwire.files.tar.gz dist/helpwire.files.tar.gz.sig \
+            dist/helpwire.pub \
+            dist/*.pkg.tar.zst dist/*.pkg.tar.zst.sig
 
       - name: Publish official versioned release
         env:
@@ -135,9 +150,9 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "v$V" >/dev/null 2>&1; then
-            gh release upload "v$V" --clobber dist/*.pkg.tar.zst
+            gh release upload "v$V" --clobber dist/*.pkg.tar.zst dist/*.pkg.tar.zst.sig
           else
             gh release create "v$V" --title "v$V" \
               --notes "HelpWire Operator $V for Arch Linux. Install via the custom pacman repo (see the README), or 'sudo pacman -U' this asset." \
-              dist/*.pkg.tar.zst
+              dist/*.pkg.tar.zst dist/*.pkg.tar.zst.sig
           fi
