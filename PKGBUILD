@@ -1,5 +1,5 @@
-# Maintainer: hody <hody@hody.tech>
-# HelpWire Operator (Quick Connect) — Arch repackaging of the upstream portable tarball.
+# Maintainer: hody <hody@hody.dev>
+# HelpWire Operator (Quick Connect) - Arch repackaging of the upstream portable tarball.
 #
 # Upstream ships only .deb / .rpm (thin downloaders) plus a self-contained portable
 # .tar.gz. This package installs that portable tree into /opt and wires up the
@@ -8,19 +8,19 @@
 # locates its vendored Qt5 / OpenSSL 1.1 from /opt regardless of where it lives.
 
 pkgname=helpwire-operator
-pkgver=2.1.16.205
+pkgver=2.2.30.82
 pkgrel=1
-pkgdesc="HelpWire Operator — remote control / remote support desktop client (portable repackage)"
+pkgdesc="HelpWire Operator - remote control / remote support desktop client (portable repackage)"
 arch=('x86_64')
 url="https://www.helpwire.app/"
 license=('custom:proprietary')
 # The app vendors Qt5, OpenSSL 1.1, boost, etc. under /opt/helpwire-operator/lib,
-# so runtime deps are minimal — just desktop integration + ubiquitous X libs.
+# so runtime deps are minimal - just desktop integration + ubiquitous X libs.
 depends=('hicolor-icon-theme' 'xdg-utils' 'libxcb' 'fontconfig')
 options=('!strip')  # vendored libs are already stripped; avoid touching them
 source=("${pkgname}-${pkgver}.tar.gz::https://get.helpwire.app/downloads/operator/linux/helpwire-quick.tar.gz"
         "${pkgname}.desktop")
-sha256sums=('83b02dbe99d5d6fe3fbda8fb77c970bcb6e765c992f766cbc7ad4df1f45f4eaf'
+sha256sums=('9e4aa39bec2f14ad6992ab67ba550fc0e379a90cea71a2f082a7bfa4e4ea0b1f'
             'SKIP')
 
 package() {
