@@ -127,3 +127,17 @@ jobs:
             dist/helpwire.db dist/helpwire.files \
             dist/helpwire.db.tar.gz dist/helpwire.files.tar.gz \
             dist/*.pkg.tar.zst
+
+      - name: Publish official versioned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ needs.sync.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "v$V" >/dev/null 2>&1; then
+            gh release upload "v$V" --clobber dist/*.pkg.tar.zst
+          else
+            gh release create "v$V" --title "v$V" \
+              --notes "HelpWire Operator $V for Arch Linux. Install via the custom pacman repo (see the README), or 'sudo pacman -U' this asset." \
+              dist/*.pkg.tar.zst
+          fi
