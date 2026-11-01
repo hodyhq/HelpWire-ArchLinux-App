@@ -11,7 +11,15 @@ HelpWire web app launches the desktop client), and is tracked and removable by p
 
 ### From the custom pacman repo (recommended, auto-updates)
 
-Add the repo to `/etc/pacman.conf` (append at the end):
+One command to add the repo and install (idempotent, safe to re-run):
+
+```bash
+sudo bash -c 'grep -q "^\[helpwire\]" /etc/pacman.conf || printf "\n[helpwire]\nSigLevel = Optional TrustAll\nServer = https://github.com/hodyhq/HelpWire-ArchLinux-App/releases/download/repo\n" >> /etc/pacman.conf; pacman -Sy --needed helpwire-operator'
+```
+
+After that, your normal `sudo pacman -Syu` keeps it current.
+
+Or do it by hand. Add the repo to `/etc/pacman.conf` (append at the end):
 
 ```ini
 [helpwire]
