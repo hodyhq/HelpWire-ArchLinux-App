@@ -108,9 +108,9 @@ jobs:
             cp ./*.pkg.tar.zst dist/
             cd dist
             repo-add helpwire.db.tar.gz ./*.pkg.tar.zst
-            # pacman requests the bare names helpwire.db / helpwire.files
-            cp helpwire.db.tar.gz helpwire.db
-            cp helpwire.files.tar.gz helpwire.files
+            # repo-add emits helpwire.db -> helpwire.db.tar.gz symlinks; pacman fetches the
+            # bare names, so turn them into real files (--remove-destination drops the symlink first).
+            for f in helpwire.db helpwire.files; do cp --remove-destination "$(readlink -f "$f")" "$f"; done
           '
           ls -lh dist
 
