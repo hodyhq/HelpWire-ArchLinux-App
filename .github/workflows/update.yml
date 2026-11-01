@@ -97,14 +97,13 @@ jobs:
         with:
           ref: ${{ github.ref }}   # pick up the bump commit sync just pushed
 
-      - name: Build, sign, and assemble the repo in an Arch container
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      # Build runs makepkg against the untrusted upstream tarball, so the signing key is
+      # deliberately NOT in this container's environment.
+      - name: Build package and repo DB in an Arch container (no secret)
         run: |
           set -euo pipefail
-          [ -n "$GPG_PRIVATE_KEY" ] || { echo 'GPG_PRIVATE_KEY secret is not set'; exit 1; }
-          docker run --rm -e GPG_PRIVATE_KEY -v "$PWD":/w -w /w archlinux:latest bash -euo pipefail -c '
-            pacman -Syu --noconfirm --needed base-devel git gnupg
+          docker run --rm -v "$PWD":/w -w /w archlinux:latest bash -euo pipefail -c '
+            pacman -Syu --noconfirm --needed base-devel git
             useradd -m builder
             chown -R builder:builder /w
             runuser -u builder -- makepkg -f --nodeps --noconfirm
@@ -114,7 +113,19 @@ jobs:
             repo-add helpwire.db.tar.gz ./*.pkg.tar.zst
             # repo-add emits symlinks; pacman fetches bare names, so make them real files.
             for f in helpwire.db helpwire.files; do cp --remove-destination "$(readlink -f "$f")" "$f"; done
-            # GPG-sign every package and DB (detached, binary) so SigLevel=Required passes.
+          '
+          cp helpwire.pub dist/helpwire.pub
+
+      # Signing runs ONLY gpg over the already-built artifacts; this is the only place the
+      # key is exposed, and no untrusted build code runs here.
+      - name: Sign packages and DB in an isolated container
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$GPG_PRIVATE_KEY" ] || { echo 'GPG_PRIVATE_KEY secret is not set'; exit 1; }
+          docker run --rm -e GPG_PRIVATE_KEY -v "$PWD/dist":/d -w /d archlinux:latest bash -euo pipefail -c '
+            pacman -Syu --noconfirm --needed gnupg
             export GNUPGHOME="$(mktemp -d)"
             printf "%s" "$GPG_PRIVATE_KEY" | gpg --batch --import
             for f in ./*.pkg.tar.zst helpwire.db.tar.gz helpwire.files.tar.gz; do
@@ -122,7 +133,6 @@ jobs:
             done
             cp helpwire.db.tar.gz.sig helpwire.db.sig
             cp helpwire.files.tar.gz.sig helpwire.files.sig
-            cp /w/helpwire.pub helpwire.pub
           '
           ls -lh dist
 
